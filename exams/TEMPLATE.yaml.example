@@ -1,0 +1,35 @@
+# Copy this file to `exams/<your-exam-id>.yaml` (drop the `.example`) and edit.
+# Full schema reference: exams/SCHEMA.md
+apiVersion: cka-practice/v1
+kind: Exam
+metadata:
+  id: my-new-exam
+  title: "My New Exam"
+  description: "One or two sentences describing what this exam covers."
+  defaultDurationMinutes: 60
+
+questions:
+  - id: q1
+    domain: "Workloads & Scheduling"
+    weight: 100
+    title: "Short title shown in the sidebar"
+    contexts: [k8s-c1]
+    namespace: myexam-q1
+    prompt: |
+      Task weight: 100%
+
+      Context: `k8s-c1`
+
+      Describe what the student needs to do here.
+    hint: |
+      A nudge in the right direction (Casual mode only).
+    solution: |
+      kubectl ... a reference command-line solution (Casual mode only)
+    setup: []
+    checks:
+      - description: "Something exists"
+        get: { kind: pod, name: example, namespace: myexam-q1 }
+      - description: "Something is configured correctly"
+        get: { kind: pod, name: example, namespace: myexam-q1 }
+        assert:
+          - { field: "spec.containers[0].image", matches: "nginx" }

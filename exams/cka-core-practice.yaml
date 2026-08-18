@@ -1,0 +1,790 @@
+apiVersion: cka-practice/v1
+kind: Exam
+metadata:
+  id: cka-core-practice
+  title: "CKA Core Practice Exam"
+  description: >
+    Original practice exam covering all CKA domains at real exam weights:
+    Troubleshooting 30%, Cluster Architecture 25%, Services & Networking 20%,
+    Workloads & Scheduling 15%, Storage 10%.
+  defaultDurationMinutes: 60
+
+questions:
+  # ---------------------------------------------------------------------------
+  - id: q1
+    domain: "Workloads & Scheduling"
+    weight: 15
+    title: "Deployment with resources, probe and rollout strategy"
+    contexts: [k8s-c1]
+    namespace: cka-q1
+    prompt: |
+      Task weight: 15%
+
+      Context: `k8s-c1`
+
+      In namespace `cka-q1`, create a Deployment named `web` with the following spec:
+
+      - 3 replicas, container named `web` using image `nginx:1.25`
+      - resource `requests`: cpu=`100m`, memory=`128Mi`
+      - resource `limits`: cpu=`200m`, memory=`256Mi`
+      - a readiness probe using `httpGet` on path `/` port `80`
+      - a `RollingUpdate` strategy with `maxSurge: 1` and `maxUnavailable: 0`
+
+      Once created, scale the Deployment to **4** replicas.
+    hint: |
+      `kubectl create deployment web -n cka-q1 --image=nginx:1.25 --replicas=3 --dry-run=client -o yaml > web.yaml`
+      then edit the YAML to add resources, the readinessProbe and the strategy block before
+      `kubectl apply -f web.yaml`. Scale afterwards with `kubectl scale deployment/web -n cka-q1 --replicas=4`.
+    solution: |
+      cat <<'EOF' | kubectl apply -f -
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: web
+        namespace: cka-q1
+      spec:
+        replicas: 4
+        strategy:
+          type: RollingUpdate
+          rollingUpdate:
+            maxSurge: 1
+            maxUnavailable: 0
+        selector:
+          matchLabels:
+            app: web
+        template:
+          metadata:
+            labels:
+              app: web
+          spec:
+            containers:
+            - name: web
+              image: nginx:1.25
+              ports:
+              - containerPort: 80
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+              readinessProbe:
+                httpGet:
+                  path: /
+                  port: 80
+      EOF
+    setup: []
+    checks:
+      - description: "Deployment `web` exists in namespace `cka-q1`"
+        get: { kind: deployment, name: web, namespace: cka-q1 }
+      - description: "Replicas set to 4"
+        get: { kind: deployment, name: web, namespace: cka-q1 }
+        assert:
+          - { field: "spec.replicas", equals: 4 }
+      - description: "Container image is nginx"
+        get: { kind: deployment, name: web, namespace: cka-q1 }
+        assert:
+          - { field: "spec.template.spec.containers[0].image", matches: "nginx" }
+      - description: "Resource requests set correctly (cpu=100m, memory=128Mi)"
+        get: { kind: deployment, name: web, namespace: cka-q1 }
+        assert:
+          - { field: "spec.template.spec.containers[0].resources.requests.cpu", equals: "100m" }
+          - { field: "spec.template.spec.containers[0].resources.requests.memory", equals: "128Mi" }
+      - description: "Resource limits set correctly (cpu=200m, memory=256Mi)"
+        get: { kind: deployment, name: web, namespace: cka-q1 }
+        assert:
+          - { field: "spec.template.spec.containers[0].resources.limits.cpu", equals: "200m" }
+          - { field: "spec.template.spec.containers[0].resources.limits.memory", equals: "256Mi" }
+      - description: "Readiness probe configured on `/` port 80"
+        get: { kind: deployment, name: web, namespace: cka-q1 }
+        assert:
+          - { field: "spec.template.spec.containers[0].readinessProbe.httpGet.path", equals: "/" }
+          - { field: "spec.template.spec.containers[0].readinessProbe.httpGet.port", equals: 80 }
+      - description: "RollingUpdate strategy (maxSurge=1, maxUnavailable=0)"
+        get: { kind: deployment, name: web, namespace: cka-q1 }
+        assert:
+          - { field: "spec.strategy.type", equals: "RollingUpdate" }
+          - { field: "spec.strategy.rollingUpdate.maxSurge", equals: 1 }
+          - { field: "spec.strategy.rollingUpdate.maxUnavailable", equals: 0 }
+      - description: "Rollout completed (4/4 ready)"
+        get: { kind: deployment, name: web, namespace: cka-q1 }
+        assert:
+          - { field: "status.readyReplicas", equals: 4 }
+
+  # ---------------------------------------------------------------------------
+  - id: q2
+    domain: "Cluster Architecture, Installation & Configuration"
+    weight: 9
+    title: "RBAC: restrict a ServiceAccount to pod read access"
+    contexts: [k8s-c1]
+    namespace: cka-q2
+    prompt: |
+      Task weight: 9%
+
+      Context: `k8s-c1`
+
+      In namespace `cka-q2`:
+
+      1. Create a ServiceAccount named `pipeline-runner`.
+      2. Create a Role named `pod-reader` that allows `get`, `list`, and `watch` on `pods`
+         and `get` on `pods/log`.
+      3. Create a RoleBinding named `pipeline-runner-binding` that binds the `pod-reader`
+         Role to the `pipeline-runner` ServiceAccount.
+
+      The ServiceAccount must be able to read pods **only** inside `cka-q2` — it must
+      **not** have pod read access in the `default` namespace.
+    hint: |
+      `kubectl create serviceaccount pipeline-runner -n cka-q2`, then a Role with both
+      the `pods` and `pods/log` rules, then
+      `kubectl create rolebinding pipeline-runner-binding -n cka-q2 --role=pod-reader --serviceaccount=cka-q2:pipeline-runner`.
+      Verify with `kubectl auth can-i get pods -n cka-q2 --as=system:serviceaccount:cka-q2:pipeline-runner`.
+    solution: |
+      kubectl create serviceaccount pipeline-runner -n cka-q2
+      cat <<'EOF' | kubectl apply -f -
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: pod-reader
+        namespace: cka-q2
+      rules:
+      - apiGroups: [""]
+        resources: ["pods"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: [""]
+        resources: ["pods/log"]
+        verbs: ["get"]
+      EOF
+      kubectl create rolebinding pipeline-runner-binding -n cka-q2 --role=pod-reader --serviceaccount=cka-q2:pipeline-runner
+    setup: []
+    checks:
+      - description: "ServiceAccount `pipeline-runner` exists in `cka-q2`"
+        get: { kind: serviceaccount, name: pipeline-runner, namespace: cka-q2 }
+      - description: "Role `pod-reader` exists in `cka-q2`"
+        get: { kind: role, name: pod-reader, namespace: cka-q2 }
+      - description: "RoleBinding `pipeline-runner-binding` exists in `cka-q2`"
+        get: { kind: rolebinding, name: pipeline-runner-binding, namespace: cka-q2 }
+      - description: "ServiceAccount can get pods in `cka-q2`"
+        kubectl:
+          args: ["auth", "can-i", "get", "pods", "-n", "cka-q2", "--as", "system:serviceaccount:cka-q2:pipeline-runner"]
+        assert:
+          stdout: { equals: "yes" }
+      - description: "ServiceAccount can list pods in `cka-q2`"
+        kubectl:
+          args: ["auth", "can-i", "list", "pods", "-n", "cka-q2", "--as", "system:serviceaccount:cka-q2:pipeline-runner"]
+        assert:
+          stdout: { equals: "yes" }
+      - description: "ServiceAccount can get pod logs in `cka-q2`"
+        kubectl:
+          args: ["auth", "can-i", "get", "pods/log", "-n", "cka-q2", "--as", "system:serviceaccount:cka-q2:pipeline-runner"]
+        assert:
+          stdout: { equals: "yes" }
+      - description: "ServiceAccount cannot get pods in `default` (properly scoped)"
+        kubectl:
+          args: ["auth", "can-i", "get", "pods", "-n", "default", "--as", "system:serviceaccount:cka-q2:pipeline-runner"]
+        assert:
+          stdout: { equals: "no" }
+
+  # ---------------------------------------------------------------------------
+  - id: q3
+    domain: "Cluster Architecture, Installation & Configuration"
+    weight: 8
+    title: "Create a static Pod on the control-plane node"
+    contexts: [k8s-c1]
+    namespace: cka-q3
+    prompt: |
+      Task weight: 8%
+
+      Context: `k8s-c1`
+
+      SSH-equivalent: from your terminal run `docker exec -it cka-main-control-plane bash`
+      to reach the node directly (this is the equivalent of SSH-ing into a node during the
+      real exam).
+
+      On that node, create a **static Pod** named `static-web` in namespace `cka-q3` that
+      runs image `nginx:1.25` and exposes container port `80`, by placing a manifest in
+      the kubelet's static pod directory (`/etc/kubernetes/manifests/`).
+
+      Confirm the mirror Pod `static-web-cka-main-control-plane` shows up via
+      `kubectl get pods -n cka-q3` and reaches `Running`.
+    hint: |
+      Inside the node: `vi /etc/kubernetes/manifests/static-web.yaml`, set
+      `metadata.namespace: cka-q3`, `metadata.name: static-web`, one container named e.g.
+      `web` with `image: nginx:1.25` and `containerPort: 80`. The kubelet picks it up
+      automatically within a few seconds — no `kubectl apply` needed.
+    solution: |
+      docker exec -it cka-main-control-plane bash
+      cat <<'EOF' > /etc/kubernetes/manifests/static-web.yaml
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: static-web
+        namespace: cka-q3
+      spec:
+        containers:
+        - name: web
+          image: nginx:1.25
+          ports:
+          - containerPort: 80
+      EOF
+    setup:
+      - shell:
+          target: "node:cka-main-control-plane"
+          run: "rm -f /etc/kubernetes/manifests/static-web.yaml"
+    checks:
+      - description: "Mirror Pod `static-web-cka-main-control-plane` exists in `cka-q3`"
+        get: { kind: pod, name: static-web-cka-main-control-plane, namespace: cka-q3 }
+      - description: "It is a static pod (mirror annotation present)"
+        get: { kind: pod, name: static-web-cka-main-control-plane, namespace: cka-q3 }
+        assert:
+          - { field: "metadata.annotations['kubernetes.io/config.mirror']", exists: true }
+      - description: "Container image is nginx"
+        get: { kind: pod, name: static-web-cka-main-control-plane, namespace: cka-q3 }
+        assert:
+          - { field: "spec.containers[0].image", matches: "nginx" }
+      - description: "Container port 80 exposed"
+        get: { kind: pod, name: static-web-cka-main-control-plane, namespace: cka-q3 }
+        assert:
+          - { field: "spec.containers[0].ports[0].containerPort", equals: 80 }
+      - description: "Pod is Running"
+        get: { kind: pod, name: static-web-cka-main-control-plane, namespace: cka-q3 }
+        assert:
+          - { field: "status.phase", equals: "Running" }
+
+  # ---------------------------------------------------------------------------
+  - id: q4
+    domain: "Cluster Architecture, Installation & Configuration"
+    weight: 8
+    title: "Node maintenance: cordon, drain and taint"
+    contexts: [k8s-c1]
+    namespace: cka-q4
+    prompt: |
+      Task weight: 8%
+
+      Context: `k8s-c1`
+
+      Namespace `cka-q4` has a Deployment called `filler` with Pods spread across the
+      worker nodes.
+
+      1. Cordon node `cka-main-worker2`.
+      2. Drain `cka-main-worker2` safely (ignore DaemonSets, delete emptyDir data) so none
+         of the `filler` Pods remain scheduled there.
+      3. Taint node `cka-main-worker` with key `dedicated`, value `infra`, effect `NoSchedule`.
+
+      Do not modify node `cka-main-control-plane`.
+    hint: |
+      `kubectl cordon cka-main-worker2` then
+      `kubectl drain cka-main-worker2 --ignore-daemonsets --delete-emptydir-data`.
+      Taint with `kubectl taint node cka-main-worker dedicated=infra:NoSchedule`.
+    solution: |
+      kubectl cordon cka-main-worker2
+      kubectl drain cka-main-worker2 --ignore-daemonsets --delete-emptydir-data
+      kubectl taint node cka-main-worker dedicated=infra:NoSchedule
+    setup:
+      - kubectl: ["uncordon", "cka-main-worker"]
+      - kubectl: ["uncordon", "cka-main-worker2"]
+      - kubectl: ["taint", "node", "cka-main-worker", "dedicated=infra:NoSchedule-"]
+      - apply: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: filler
+            namespace: cka-q4
+          spec:
+            replicas: 8
+            selector:
+              matchLabels:
+                app: filler
+            template:
+              metadata:
+                labels:
+                  app: filler
+              spec:
+                containers:
+                - name: filler
+                  image: nginx:1.25
+      # wait for real node placement -- otherwise a check that runs immediately after setup
+      # would see everything still Pending and vacuously "pass" before the student's done anything
+      - kubectl: ["rollout", "status", "deployment/filler", "-n", "cka-q4", "--timeout=60s"]
+    checks:
+      - description: "`cka-main-worker2` is cordoned (unschedulable)"
+        get: { kind: node, name: cka-main-worker2 }
+        assert:
+          - { field: "spec.unschedulable", equals: true }
+      - description: "No `filler` Pods running on `cka-main-worker2` (drained)"
+        list: { kind: pods, namespace: cka-q4 }
+        filter:
+          - { field: "spec.nodeName", equals: "cka-main-worker2" }
+          - { field: "status.phase", equals: "Running" }
+        count: { equals: 0 }
+      - description: "`cka-main-worker` tainted `dedicated=infra:NoSchedule`"
+        get: { kind: node, name: cka-main-worker }
+        assert:
+          - { field: "spec.taints", containsMatch: { key: "dedicated", value: "infra", effect: "NoSchedule" } }
+      - description: "`cka-main-control-plane` left untouched"
+        get: { kind: node, name: cka-main-control-plane }
+        assert:
+          - { field: "spec.unschedulable", exists: false }
+          - { field: "spec.taints", notContainsMatch: { key: "dedicated", value: "infra" } }
+
+  # ---------------------------------------------------------------------------
+  - id: q5
+    domain: "Services & Networking"
+    weight: 10
+    title: "Fix a broken Service so it reaches its Pods"
+    contexts: [k8s-c1]
+    namespace: cka-q5
+    prompt: |
+      Task weight: 10%
+
+      Context: `k8s-c1`
+
+      In namespace `cka-q5`, the Deployment `payments` (Pods labelled `app=payments`,
+      listening on container port `8080`) exists and is healthy, but the Service
+      `payments-svc` is not routing any traffic to it.
+
+      Fix the **Service only** (do not modify the Deployment) so that `payments-svc`:
+
+      - correctly selects the `payments` Pods
+      - serves on port `80` and forwards to the Pods' port `8080`
+    hint: |
+      `kubectl get deploy payments -n cka-q5 -o yaml` to see the real Pod labels, then
+      `kubectl edit svc payments-svc -n cka-q5` and fix `spec.selector` and
+      `spec.ports[0].targetPort`. Confirm with `kubectl get endpoints payments-svc -n cka-q5`
+      — it should list Pod IPs.
+    solution: |
+      kubectl patch svc payments-svc -n cka-q5 --type merge -p '{"spec":{"selector":{"app":"payments"},"ports":[{"port":80,"targetPort":8080}]}}'
+    setup:
+      - apply: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: payments
+            namespace: cka-q5
+          spec:
+            replicas: 3
+            selector:
+              matchLabels:
+                app: payments
+            template:
+              metadata:
+                labels:
+                  app: payments
+              spec:
+                containers:
+                - name: payments
+                  image: nginx:1.25
+                  ports:
+                  - containerPort: 8080
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: payments-svc
+            namespace: cka-q5
+          spec:
+            selector:
+              app: payment
+            ports:
+            - port: 80
+              targetPort: 80
+    checks:
+      - description: "Service `payments-svc` exists"
+        get: { kind: service, name: payments-svc, namespace: cka-q5 }
+      - description: "Selector matches `payments` Pods (`app: payments`)"
+        get: { kind: service, name: payments-svc, namespace: cka-q5 }
+        assert:
+          - { field: "spec.selector.app", equals: "payments" }
+      - description: "Port 80 forwards to targetPort 8080"
+        get: { kind: service, name: payments-svc, namespace: cka-q5 }
+        assert:
+          - { field: "spec.ports[0].port", equals: 80 }
+          - { field: "spec.ports[0].targetPort", equals: 8080 }
+      - description: "Deployment left unmodified"
+        get: { kind: deployment, name: payments, namespace: cka-q5 }
+        assert:
+          - { field: "spec.replicas", equals: 3 }
+          - { field: "spec.template.spec.containers[0].ports[0].containerPort", equals: 8080 }
+      - description: "Endpoints resolve to real Pod IPs (traffic actually flows)"
+        get: { kind: endpoints, name: payments-svc, namespace: cka-q5 }
+        assert:
+          - { field: "subsets[0].addresses", nonEmpty: true }
+
+  # ---------------------------------------------------------------------------
+  - id: q6
+    domain: "Services & Networking"
+    weight: 10
+    title: "Restrict backend ingress with a NetworkPolicy"
+    contexts: [k8s-c1]
+    namespace: cka-q6
+    prompt: |
+      Task weight: 10%
+
+      Context: `k8s-c1`
+
+      Namespace `cka-q6` has two Deployments: `frontend` (Pods labelled `app=frontend`)
+      and `backend` (Pods labelled `app=backend`, port `80`).
+
+      Create a NetworkPolicy named `backend-allow-frontend` in `cka-q6` that:
+
+      - applies to Pods labelled `app=backend`
+      - allows **ingress** only from Pods labelled `app=frontend` in the same namespace,
+        on port `80`
+      - denies all other ingress traffic to `backend` Pods
+
+      > Note: this environment's CNI does not enforce NetworkPolicy live (same limitation
+      > as many kind-based labs) — grading checks that the policy object itself is
+      > spec-correct, exactly as a real exam grader inspects the manifest.
+    hint: |
+      `kubectl get pods -n cka-q6 --show-labels` to confirm label names, then write a
+      NetworkPolicy with `spec.podSelector.matchLabels: {app: backend}`,
+      `policyTypes: [Ingress]`, and one ingress rule
+      `from: [{podSelector: {matchLabels: {app: frontend}}}]`, `ports: [{protocol: TCP, port: 80}]`.
+    solution: |
+      cat <<'EOF' | kubectl apply -f -
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: backend-allow-frontend
+        namespace: cka-q6
+      spec:
+        podSelector:
+          matchLabels:
+            app: backend
+        policyTypes:
+        - Ingress
+        ingress:
+        - from:
+          - podSelector:
+              matchLabels:
+                app: frontend
+          ports:
+          - protocol: TCP
+            port: 80
+      EOF
+    setup:
+      - apply: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: frontend
+            namespace: cka-q6
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: frontend
+            template:
+              metadata:
+                labels:
+                  app: frontend
+              spec:
+                containers:
+                - name: frontend
+                  image: nginx:1.25
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: backend
+            namespace: cka-q6
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: backend
+            template:
+              metadata:
+                labels:
+                  app: backend
+              spec:
+                containers:
+                - name: backend
+                  image: nginx:1.25
+                  ports:
+                  - containerPort: 80
+    checks:
+      - description: "NetworkPolicy `backend-allow-frontend` exists in `cka-q6`"
+        get: { kind: networkpolicy, name: backend-allow-frontend, namespace: cka-q6 }
+      - description: "Applies to `app=backend` Pods"
+        get: { kind: networkpolicy, name: backend-allow-frontend, namespace: cka-q6 }
+        assert:
+          - { field: "spec.podSelector.matchLabels.app", equals: "backend" }
+      - description: "Policy type is `Ingress`"
+        get: { kind: networkpolicy, name: backend-allow-frontend, namespace: cka-q6 }
+        assert:
+          - { field: "spec.policyTypes", contains: "Ingress" }
+      - description: "Allows ingress from `app=frontend` Pods"
+        get: { kind: networkpolicy, name: backend-allow-frontend, namespace: cka-q6 }
+        assert:
+          - { field: "spec.ingress[0].from[0].podSelector.matchLabels.app", equals: "frontend" }
+      - description: "Restricted to port 80/TCP"
+        get: { kind: networkpolicy, name: backend-allow-frontend, namespace: cka-q6 }
+        assert:
+          - { field: "spec.ingress[0].ports[0].port", equals: 80 }
+
+  # ---------------------------------------------------------------------------
+  - id: q7
+    domain: "Storage"
+    weight: 10
+    title: "Static PersistentVolume, PersistentVolumeClaim and Pod"
+    contexts: [k8s-c1]
+    namespace: cka-q7
+    prompt: |
+      Task weight: 10%
+
+      Context: `k8s-c1`
+
+      1. Create a PersistentVolume named `data-pv`: capacity `1Gi`, access mode
+         `ReadWriteOnce`, `storageClassName: manual`, using `hostPath` `/mnt/data`.
+      2. Create a PersistentVolumeClaim named `data-pvc` in namespace `cka-q7`: requests
+         `500Mi`, `storageClassName: manual`. It should bind to `data-pv`.
+      3. Create a Pod named `data-user` in namespace `cka-q7` using image `nginx:1.25`
+         that mounts `data-pvc` at `/usr/share/nginx/html`.
+    hint: |
+      PVs are cluster-scoped (no namespace). Make sure `storageClassName` matches on both
+      the PV and PVC, and the PVC's requested size (500Mi) is ≤ the PV's capacity (1Gi) so
+      they bind. Mount via `spec.volumes` + `volumeMounts` in the Pod.
+    solution: |
+      cat <<'EOF' | kubectl apply -f -
+      apiVersion: v1
+      kind: PersistentVolume
+      metadata:
+        name: data-pv
+      spec:
+        capacity:
+          storage: 1Gi
+        accessModes:
+        - ReadWriteOnce
+        storageClassName: manual
+        hostPath:
+          path: /mnt/data
+      ---
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: data-pvc
+        namespace: cka-q7
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        storageClassName: manual
+        resources:
+          requests:
+            storage: 500Mi
+      ---
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: data-user
+        namespace: cka-q7
+      spec:
+        containers:
+        - name: nginx
+          image: nginx:1.25
+          volumeMounts:
+          - name: data
+            mountPath: /usr/share/nginx/html
+        volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data-pvc
+      EOF
+    setup:
+      - kubectl: ["delete", "pod", "data-user", "-n", "cka-q7", "--ignore-not-found", "--wait=true", "--force", "--grace-period=0"]
+      - kubectl: ["delete", "pvc", "data-pvc", "-n", "cka-q7", "--ignore-not-found", "--wait=true"]
+      - kubectl: ["delete", "pv", "data-pv", "--ignore-not-found", "--wait=true"]
+    checks:
+      - description: "PV `data-pv` exists with correct capacity/mode/hostPath/storageClass"
+        get: { kind: pv, name: data-pv }
+        assert:
+          - { field: "spec.storageClassName", equals: "manual" }
+          - { field: "spec.accessModes", contains: "ReadWriteOnce" }
+          - { field: "spec.hostPath.path", equals: "/mnt/data" }
+      - description: "PVC `data-pvc` exists in `cka-q7` and is Bound"
+        get: { kind: pvc, name: data-pvc, namespace: cka-q7 }
+        assert:
+          - { field: "spec.storageClassName", equals: "manual" }
+          - { field: "status.phase", equals: "Bound" }
+      - description: "Pod `data-user` mounts `data-pvc` at `/usr/share/nginx/html`"
+        get: { kind: pod, name: data-user, namespace: cka-q7 }
+        assert:
+          - { field: "spec.containers[0].image", matches: "nginx" }
+          - { field: "spec.containers[0].volumeMounts[0].mountPath", equals: "/usr/share/nginx/html" }
+          - { field: "spec.volumes[0].persistentVolumeClaim.claimName", equals: "data-pvc" }
+      - description: "Pod `data-user` is Running"
+        get: { kind: pod, name: data-user, namespace: cka-q7 }
+        assert:
+          - { field: "status.phase", equals: "Running" }
+
+  # ---------------------------------------------------------------------------
+  - id: q8
+    domain: "Troubleshooting"
+    weight: 10
+    title: "Fix a Deployment stuck due to bad ConfigMap reference"
+    contexts: [k8s-c1]
+    namespace: cka-q8
+    prompt: |
+      Task weight: 10%
+
+      Context: `k8s-c1`
+
+      The Deployment `broken-app` in namespace `cka-q8` never reaches `Running`.
+      Investigate and fix it so the Pod becomes `Running` and `Ready`.
+
+      Constraints: do **not** change the container image, and do **not** delete the
+      Deployment.
+    hint: |
+      `kubectl describe pod -n cka-q8 -l app=broken-app` — look at the events. Then check
+      `kubectl get configmap app-config -n cka-q8 -o yaml` against what the Deployment's
+      `env` actually references.
+    solution: |
+      kubectl get deployment broken-app -n cka-q8 -o yaml | grep -A3 configMapKeyRef
+      kubectl get configmap app-config -n cka-q8 -o yaml
+      # fix whichever side is wrong, e.g.:
+      kubectl patch configmap app-config -n cka-q8 --type merge -p '{"data":{"LOG_LEVEL":"debug"}}'
+    setup:
+      - apply: |
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: app-config
+            namespace: cka-q8
+          data:
+            LOGLEVEL: debug
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: broken-app
+            namespace: cka-q8
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: broken-app
+            template:
+              metadata:
+                labels:
+                  app: broken-app
+              spec:
+                containers:
+                - name: broken-app
+                  image: busybox:1.36
+                  command: ["sh", "-c", "echo starting with LOG_LEVEL=$LOG_LEVEL && sleep 3600"]
+                  env:
+                  - name: LOG_LEVEL
+                    valueFrom:
+                      configMapKeyRef:
+                        name: app-config
+                        key: LOG_LEVEL
+    checks:
+      - description: "Deployment `broken-app` still exists"
+        get: { kind: deployment, name: broken-app, namespace: cka-q8 }
+      - description: "Container image unchanged (`busybox:1.36`)"
+        get: { kind: deployment, name: broken-app, namespace: cka-q8 }
+        assert:
+          - { field: "spec.template.spec.containers[0].image", equals: "busybox:1.36" }
+      - description: "Pod reaches `Running` and `Ready`"
+        list: { kind: pods, namespace: cka-q8, labelSelector: "app=broken-app" }
+        filter:
+          - { field: "status.phase", equals: "Running" }
+          - { field: "status.containerStatuses[0].ready", equals: true }
+        count: { gte: 1 }
+
+  # ---------------------------------------------------------------------------
+  - id: q9
+    domain: "Troubleshooting"
+    weight: 10
+    title: "Restore a NotReady node in a second cluster"
+    contexts: [k8s-c2]
+    prompt: |
+      Task weight: 10%
+
+      Switch context: `kubectl config use-context k8s-c2`
+
+      This is a **separate cluster** from the rest of the exam. Its only node is in
+      `NotReady` state. Investigate and restore it to `Ready`, without deleting/recreating
+      the node.
+
+      SSH-equivalent: `docker exec -it cka-ctx2-control-plane bash` to investigate on the
+      node itself.
+    hint: |
+      Check `kubectl describe node` for the reason, then look at the kubelet on the node:
+      `systemctl status kubelet`. If it's stopped, `systemctl start kubelet` (and
+      `systemctl enable kubelet` so it doesn't happen again).
+    solution: |
+      docker exec -it cka-ctx2-control-plane bash
+      systemctl status kubelet
+      systemctl start kubelet
+      systemctl enable kubelet
+    setup:
+      - shell:
+          target: "node:cka-ctx2-control-plane"
+          run: "systemctl stop kubelet"
+    checks:
+      - description: "kubelet service is active on the node"
+        shell:
+          target: "node:cka-ctx2-control-plane"
+          run: "systemctl is-active kubelet"
+        assert:
+          stdout: { equals: "active" }
+      - description: "Node reports `Ready` in `k8s-c2`"
+        get: { kind: node, name: cka-ctx2-control-plane, context: k8s-c2 }
+        assert:
+          - { field: "status.conditions", containsMatch: { type: "Ready", status: "True" } }
+
+  # ---------------------------------------------------------------------------
+  - id: q10
+    domain: "Troubleshooting"
+    weight: 10
+    title: "Recover a downed kube-scheduler"
+    contexts: [k8s-c1]
+    namespace: cka-q10
+    prompt: |
+      Task weight: 10%
+
+      Context: `k8s-c1`
+
+      New Pods in this cluster are stuck `Pending` forever — including the existing Pod
+      `canary` in namespace `cka-q10`.
+
+      Find out why the scheduler isn't scheduling anything, fix it (without
+      deleting/recreating the cluster), and confirm `canary` gets scheduled.
+
+      SSH-equivalent: `docker exec -it cka-main-control-plane bash`.
+    hint: |
+      Check `kubectl get pods -n kube-system | grep scheduler` — if it's missing entirely,
+      look at `/etc/kubernetes/manifests/` on the control-plane node for a moved or
+      missing `kube-scheduler.yaml`.
+    solution: |
+      docker exec -it cka-main-control-plane bash
+      ls /etc/kubernetes/*kube-scheduler*
+      mv /etc/kubernetes/kube-scheduler.yaml.disabled /etc/kubernetes/manifests/kube-scheduler.yaml
+    setup:
+      - shell:
+          target: "node:cka-main-control-plane"
+          run: >-
+            test -f /etc/kubernetes/manifests/kube-scheduler.yaml &&
+            mv /etc/kubernetes/manifests/kube-scheduler.yaml /etc/kubernetes/kube-scheduler.yaml.disabled || true
+      - apply: |
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: canary
+            namespace: cka-q10
+          spec:
+            containers:
+            - name: canary
+              image: nginx:1.25
+    checks:
+      - description: "kube-scheduler static pod is running again"
+        list: { kind: pods, namespace: kube-system, labelSelector: "component=kube-scheduler" }
+        filter:
+          - { field: "status.phase", equals: "Running" }
+          - { field: "status.containerStatuses[0].ready", equals: true }
+        count: { gte: 1 }
+      - description: "Pod `canary` in `cka-q10` gets scheduled to a node"
+        get: { kind: pod, name: canary, namespace: cka-q10 }
+        assert:
+          - { field: "spec.nodeName", exists: true }

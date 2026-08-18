@@ -1,0 +1,14 @@
+# Exam-jumpbox shell config — mirrors the aliases the real CKA exam / killer.sh
+# environment ships with, so muscle memory transfers.
+source /etc/bash_completion 2>/dev/null || true
+source <(kubectl completion bash) 2>/dev/null
+
+alias k=kubectl
+complete -o default -F __start_kubectl k
+
+export do="--dry-run=client -o yaml"
+export now="--force --grace-period=0"
+
+PS1='\[\e[1;36m\]\u@bastion\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\] (\[\e[33m\]$(kubectl config current-context 2>/dev/null)\[\e[0m\]) \$ '
+
+cd /root

@@ -1,0 +1,423 @@
+apiVersion: cka-practice/v1
+kind: Exam
+metadata:
+  id: hard-cka-mock-exam
+  title: "CKA-Level Mock Exam"
+  description: "Seven questions spanning RBAC, cluster architecture, scheduling, networking, storage, and node-level troubleshooting — weighted and worded to match real CKA task difficulty."
+  defaultDurationMinutes: 120
+
+questions:
+  # ---------- Cluster Architecture, Installation & Configuration ----------
+  - id: q1
+    domain: "Cluster Architecture, Installation & Configuration"
+    weight: 15
+    title: "Least-privilege RBAC for a CI service account"
+    contexts: [k8s-c1]
+    namespace: hardex-rbac
+    prompt: |
+      Task weight: 15%
+
+      Context: `k8s-c1`
+
+      A CI pipeline needs a restricted identity in namespace `hardex-rbac`.
+
+      1. Create a `ServiceAccount` named `deploy-bot`.
+      2. Create a `Role` named `deploy-bot-role` in `hardex-rbac` that allows:
+         - `get`, `list`, `watch` on `pods`
+         - `create`, `update`, `patch` on `deployments` (apiGroup `apps`)
+      3. Bind the Role to the ServiceAccount with a `RoleBinding` named `deploy-bot-binding`.
+
+      The ServiceAccount must **not** be able to delete Pods or read Secrets in this
+      namespace, and must have **no** access outside `hardex-rbac`.
+
+      > Do not use `ClusterRole`/`ClusterRoleBinding` for this task — scope it to the namespace.
+    hint: |
+      `kubectl create serviceaccount deploy-bot -n hardex-rbac`, then `kubectl create role`
+      with `--verb`/`--resource`, then `kubectl create rolebinding` with `--role`/`--serviceaccount`.
+      Verify with `kubectl auth can-i ... --as=system:serviceaccount:hardex-rbac:deploy-bot`.
+    solution: |
+      kubectl create serviceaccount deploy-bot -n hardex-rbac
+      kubectl create role deploy-bot-role -n hardex-rbac \
+        --verb=get,list,watch --resource=pods
+      kubectl patch role deploy-bot-role -n hardex-rbac --type=json \
+        -p='[{"op":"add","path":"/rules/-","value":{"apiGroups":["apps"],"resources":["deployments"],"verbs":["create","update","patch"]}}]'
+      kubectl create rolebinding deploy-bot-binding -n hardex-rbac \
+        --role=deploy-bot-role --serviceaccount=hardex-rbac:deploy-bot
+    setup: []
+    checks:
+      - description: "ServiceAccount `deploy-bot` exists in `hardex-rbac`"
+        get: { kind: serviceaccount, name: deploy-bot, namespace: hardex-rbac }
+      - description: "Role `deploy-bot-role` exists"
+        get: { kind: role, name: deploy-bot-role, namespace: hardex-rbac }
+      - description: "RoleBinding `deploy-bot-binding` binds `deploy-bot-role` to `deploy-bot`"
+        get: { kind: rolebinding, name: deploy-bot-binding, namespace: hardex-rbac }
+        assert:
+          - { field: "roleRef.name", equals: "deploy-bot-role" }
+          - { field: "subjects[0].name", equals: "deploy-bot" }
+          - { field: "subjects[0].namespace", equals: "hardex-rbac" }
+      - description: "`deploy-bot` can create deployments in `hardex-rbac`"
+        kubectl:
+          args: ["auth", "can-i", "create", "deployments", "-n", "hardex-rbac", "--as", "system:serviceaccount:hardex-rbac:deploy-bot"]
+        assert:
+          stdout: { equals: "yes" }
+      - description: "`deploy-bot` can list pods in `hardex-rbac`"
+        kubectl:
+          args: ["auth", "can-i", "list", "pods", "-n", "hardex-rbac", "--as", "system:serviceaccount:hardex-rbac:deploy-bot"]
+        assert:
+          stdout: { equals: "yes" }
+      - description: "`deploy-bot` cannot delete pods in `hardex-rbac`"
+        kubectl:
+          args: ["auth", "can-i", "delete", "pods", "-n", "hardex-rbac", "--as", "system:serviceaccount:hardex-rbac:deploy-bot"]
+        assert:
+          stdout: { equals: "no" }
+      - description: "`deploy-bot` cannot read secrets in `hardex-rbac`"
+        kubectl:
+          args: ["auth", "can-i", "get", "secrets", "-n", "hardex-rbac", "--as", "system:serviceaccount:hardex-rbac:deploy-bot"]
+        assert:
+          stdout: { equals: "no" }
+
+  # ---------- Cluster Architecture: broken static pod ----------
+  - id: q2
+    domain: "Cluster Architecture, Installation & Configuration"
+    weight: 15
+    title: "Restore a disabled kube-scheduler static pod"
+    contexts: [k8s-c1]
+    namespace: hardex-sched
+    prompt: |
+      Task weight: 15%
+
+      Context: `k8s-c1`
+
+      New Pods in the cluster are stuck in `Pending` and never get scheduled onto a node.
+
+      A canary Deployment `scheduler-canary` already exists in namespace `hardex-sched`
+      and is stuck `Pending`. Investigate the control plane node `cka-main-control-plane`
+      and restore normal scheduling **without deleting or recreating the node**.
+
+      SSH-equivalent: `docker exec -it cka-main-control-plane bash`.
+    hint: |
+      Check `/etc/kubernetes/manifests/` on the control plane node for a missing
+      `kube-scheduler.yaml` — the kubelet only runs static pods it finds there.
+    solution: |
+      docker exec -it cka-main-control-plane bash
+      mv /etc/kubernetes/kube-scheduler.yaml.disabled /etc/kubernetes/manifests/kube-scheduler.yaml
+    setup:
+      - shell:
+          target: "node:cka-main-control-plane"
+          run: >-
+            test -f /etc/kubernetes/manifests/kube-scheduler.yaml &&
+            mv /etc/kubernetes/manifests/kube-scheduler.yaml /etc/kubernetes/kube-scheduler.yaml.disabled || true
+      - apply: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: scheduler-canary
+            namespace: hardex-sched
+          spec:
+            replicas: 1
+            selector:
+              matchLabels: {app: scheduler-canary}
+            template:
+              metadata:
+                labels: {app: scheduler-canary}
+              spec:
+                containers:
+                - name: canary
+                  image: busybox:1.36
+                  command: ["sh", "-c", "sleep 3600"]
+    checks:
+      - description: "`kube-scheduler.yaml` is back in the static-pod manifest directory"
+        shell:
+          target: "node:cka-main-control-plane"
+          run: "test -f /etc/kubernetes/manifests/kube-scheduler.yaml && echo yes || echo no"
+        assert:
+          stdout: { equals: "yes" }
+      - description: "Static pod `kube-scheduler-cka-main-control-plane` is `Running`"
+        get: { kind: pod, name: kube-scheduler-cka-main-control-plane, namespace: kube-system }
+        assert:
+          - { field: "status.phase", equals: "Running" }
+      - description: "Canary Pod finally got scheduled onto a node"
+        list: { kind: pods, namespace: hardex-sched, labelSelector: "app=scheduler-canary" }
+        filter:
+          - { field: "spec.nodeName", exists: true }
+        count: { gte: 1 }
+
+  # ---------- Workloads & Scheduling ----------
+  - id: q3
+    domain: "Workloads & Scheduling"
+    weight: 15
+    title: "CronJob restricted to a tainted node pool"
+    contexts: [k8s-c1]
+    namespace: hardex-batch
+    prompt: |
+      Task weight: 15%
+
+      Context: `k8s-c1`
+
+      Node `cka-main-worker2` is reserved for batch workloads and has been tainted
+      `dedicated=batch:NoSchedule`.
+
+      In namespace `hardex-batch`, create a `CronJob` named `log-cleanup` that:
+      - Runs on schedule `*/5 * * * *`
+      - Uses image `busybox:1.36` running `sh -c "echo cleanup-run; sleep 5"`
+      - Tolerates the `dedicated=batch:NoSchedule` taint
+      - Uses a `nodeSelector` (or affinity) to only ever run on `cka-main-worker2`
+      - Sets `concurrencyPolicy: Forbid` and `successfulJobsHistoryLimit: 3`
+    hint: |
+      `kubectl create cronjob log-cleanup -n hardex-batch --image=busybox:1.36 --schedule="*/5 * * * *" -- sh -c "echo cleanup-run; sleep 5"`,
+      then `kubectl edit cronjob` to add `tolerations`, `nodeSelector`, `concurrencyPolicy`, and `successfulJobsHistoryLimit`.
+    solution: |
+      kubectl create cronjob log-cleanup -n hardex-batch --image=busybox:1.36 \
+        --schedule="*/5 * * * *" -- sh -c "echo cleanup-run; sleep 5"
+      kubectl patch cronjob log-cleanup -n hardex-batch --type merge -p \
+        '{"spec":{"concurrencyPolicy":"Forbid","successfulJobsHistoryLimit":3,"jobTemplate":{"spec":{"template":{"spec":{"tolerations":[{"key":"dedicated","operator":"Equal","value":"batch","effect":"NoSchedule"}],"nodeSelector":{"kubernetes.io/hostname":"cka-main-worker2"}}}}}}}'
+    setup:
+      - kubectl: ["taint", "node", "cka-main-worker2", "dedicated=batch:NoSchedule", "--overwrite"]
+    checks:
+      - description: "CronJob `log-cleanup` exists with the correct schedule"
+        get: { kind: cronjob, name: log-cleanup, namespace: hardex-batch }
+        assert:
+          - { field: "spec.schedule", equals: "*/5 * * * *" }
+          - { field: "spec.concurrencyPolicy", equals: "Forbid" }
+          - { field: "spec.successfulJobsHistoryLimit", equals: 3 }
+      - description: "Job template uses `busybox:1.36`"
+        get: { kind: cronjob, name: log-cleanup, namespace: hardex-batch }
+        assert:
+          - { field: "spec.jobTemplate.spec.template.spec.containers[0].image", matches: "busybox" }
+      - description: "Job template tolerates the `dedicated=batch:NoSchedule` taint"
+        get: { kind: cronjob, name: log-cleanup, namespace: hardex-batch }
+        assert:
+          - { field: "spec.jobTemplate.spec.template.spec.tolerations", containsMatch: { key: "dedicated", value: "batch", effect: "NoSchedule" } }
+      - description: "Job template is pinned to `cka-main-worker2`"
+        get: { kind: cronjob, name: log-cleanup, namespace: hardex-batch }
+        assert:
+          - { field: "spec.jobTemplate.spec.template.spec.nodeSelector['kubernetes.io/hostname']", equals: "cka-main-worker2" }
+
+  # ---------- Services & Networking ----------
+  - id: q4
+    domain: "Services & Networking"
+    weight: 15
+    title: "Fix a NetworkPolicy blocking the database tier"
+    contexts: [k8s-c1]
+    namespace: hardex-net
+    prompt: |
+      Task weight: 15%
+
+      Context: `k8s-c1`
+
+      Namespace `hardex-net` has Deployments `app` (`tier=app`) and `db` (`tier=db`,
+      port `5432`), plus a `NetworkPolicy` named `db-policy` that is supposed to allow
+      ingress to `db` Pods from `app` Pods on port `5432` — but it currently targets
+      the wrong labels and blocks everything.
+
+      Fix `db-policy` in place (do not rename or recreate it) so it correctly:
+      - Targets Pods labelled `tier=db`
+      - Allows ingress only from Pods labelled `tier=app`
+      - Allows only TCP port `5432`
+
+      > `kindnet` does not enforce NetworkPolicy at runtime — this is graded on the object's spec.
+    hint: |
+      `kubectl get networkpolicy db-policy -n hardex-net -o yaml`, compare `podSelector`
+      and `ingress[].from[].podSelector` against the real Pod labels, then `kubectl edit` it.
+    solution: |
+      kubectl patch networkpolicy db-policy -n hardex-net --type merge -p \
+        '{"spec":{"podSelector":{"matchLabels":{"tier":"db"}},"ingress":[{"from":[{"podSelector":{"matchLabels":{"tier":"app"}}}],"ports":[{"protocol":"TCP","port":5432}]}]}}'
+    setup:
+      - apply: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: app
+            namespace: hardex-net
+          spec:
+            replicas: 1
+            selector: {matchLabels: {tier: app}}
+            template:
+              metadata: {labels: {tier: app}}
+              spec:
+                containers: [{name: app, image: nginx:1.25}]
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: db
+            namespace: hardex-net
+          spec:
+            replicas: 1
+            selector: {matchLabels: {tier: db}}
+            template:
+              metadata: {labels: {tier: db}}
+              spec:
+                containers:
+                - name: db
+                  image: nginx:1.25
+                  ports: [{containerPort: 5432}]
+          ---
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: db-policy
+            namespace: hardex-net
+          spec:
+            podSelector: {matchLabels: {tier: database}}
+            policyTypes: [Ingress]
+            ingress:
+            - from: [{podSelector: {matchLabels: {tier: appserver}}}]
+              ports: [{protocol: TCP, port: 5432}]
+    checks:
+      - description: "NetworkPolicy `db-policy` still exists (not renamed)"
+        get: { kind: networkpolicy, name: db-policy, namespace: hardex-net }
+      - description: "Targets Pods labelled `tier=db`"
+        get: { kind: networkpolicy, name: db-policy, namespace: hardex-net }
+        assert:
+          - { field: "spec.podSelector.matchLabels.tier", equals: "db" }
+      - description: "Allows ingress from `tier=app` on port 5432 only"
+        get: { kind: networkpolicy, name: db-policy, namespace: hardex-net }
+        assert:
+          - { field: "spec.ingress[0].from[0].podSelector.matchLabels.tier", equals: "app" }
+          - { field: "spec.ingress[0].ports[0].port", equals: 5432 }
+          - { field: "spec.ingress[0].ports[0].protocol", equals: "TCP" }
+
+  # ---------- Storage ----------
+  - id: q5
+    domain: "Storage"
+    weight: 10
+    title: "Static PV bound through a WaitForFirstConsumer StorageClass"
+    contexts: [k8s-c1]
+    namespace: hardex-storage
+    prompt: |
+      Task weight: 10%
+
+      Context: `k8s-c1`
+
+      In namespace `hardex-storage`:
+
+      1. Create a `StorageClass` named `hardex-standard` with provisioner
+         `kubernetes.io/no-provisioner` and `volumeBindingMode: WaitForFirstConsumer`.
+      2. Create a `PersistentVolume` named `hardex-pv`: capacity `1Gi`, access mode
+         `ReadWriteOnce`, `persistentVolumeReclaimPolicy: Retain`, `storageClassName: hardex-standard`,
+         backed by `hostPath` `/mnt/data`.
+      3. Create a `PersistentVolumeClaim` named `hardex-pvc` requesting `500Mi` with
+         `storageClassName: hardex-standard`.
+      4. Create a Pod named `storage-test` (any small image) that mounts `hardex-pvc`,
+         so the claim actually binds.
+    hint: |
+      With `WaitForFirstConsumer`, the PVC stays `Pending` until a Pod that uses it
+      is scheduled — you must create the Pod for the PVC to reach `Bound`.
+    solution: |
+      kubectl apply -f storageclass.yaml -f pv.yaml -f pvc.yaml -f pod.yaml
+    setup: []
+    checks:
+      - description: "StorageClass `hardex-standard` uses `WaitForFirstConsumer` binding"
+        get: { kind: storageclass, name: hardex-standard }
+        assert:
+          - { field: "provisioner", equals: "kubernetes.io/no-provisioner" }
+          - { field: "volumeBindingMode", equals: "WaitForFirstConsumer" }
+      - description: "PV `hardex-pv` is 1Gi, ReadWriteOnce, Retain"
+        get: { kind: pv, name: hardex-pv }
+        assert:
+          - { field: "spec.capacity.storage", equals: "1Gi" }
+          - { field: "spec.accessModes", contains: "ReadWriteOnce" }
+          - { field: "spec.persistentVolumeReclaimPolicy", equals: "Retain" }
+          - { field: "spec.storageClassName", equals: "hardex-standard" }
+      - description: "PVC `hardex-pvc` is `Bound`"
+        get: { kind: pvc, name: hardex-pvc, namespace: hardex-storage }
+        assert:
+          - { field: "status.phase", equals: "Bound" }
+      - description: "Pod `storage-test` is `Running` and mounts the PVC"
+        get: { kind: pod, name: storage-test, namespace: hardex-storage }
+        assert:
+          - { field: "status.phase", equals: "Running" }
+          - { field: "spec.volumes", containsMatch: { persistentVolumeClaim: {claimName: "hardex-pvc"} } }
+
+  # ---------- Troubleshooting: node down ----------
+  - id: q6
+    domain: "Troubleshooting"
+    weight: 15
+    title: "Recover a NotReady node on the second cluster"
+    contexts: [k8s-c2]
+    prompt: |
+      Task weight: 15%
+
+      Switch context: `kubectl config use-context k8s-c2`
+
+      This cluster's only node is `NotReady`. Investigate and restore it without
+      deleting or recreating the node.
+
+      SSH-equivalent: `docker exec -it cka-ctx2-control-plane bash`.
+    hint: |
+      `systemctl status kubelet` on the node — if it's stopped, `systemctl start kubelet`.
+    solution: |
+      docker exec -it cka-ctx2-control-plane bash
+      systemctl start kubelet
+    setup:
+      - shell:
+          target: "node:cka-ctx2-control-plane"
+          run: "systemctl stop kubelet"
+    checks:
+      - description: "kubelet service is active on the node"
+        shell:
+          target: "node:cka-ctx2-control-plane"
+          run: "systemctl is-active kubelet"
+        assert:
+          stdout: { equals: "active" }
+      - description: "Node reports `Ready` in `k8s-c2`"
+        get: { kind: node, name: cka-ctx2-control-plane, context: k8s-c2 }
+        assert:
+          - { field: "status.conditions", containsMatch: { type: "Ready", status: "True" } }
+
+  # ---------- Troubleshooting: CrashLoopBackOff ----------
+  - id: q7
+    domain: "Troubleshooting"
+    weight: 15
+    title: "Fix a CrashLoopBackOff Deployment"
+    contexts: [k8s-c1]
+    namespace: hardex-crash
+    prompt: |
+      Task weight: 15%
+
+      Context: `k8s-c1`
+
+      Deployment `worker` in namespace `hardex-crash` is stuck in `CrashLoopBackOff`.
+
+      Fix it so all replicas reach `Running` and stay running. Do not change the
+      container image, and do not reduce `replicas` below `2`.
+    hint: |
+      `kubectl describe pod -n hardex-crash -l app=worker` and check the container's
+      last termination reason and exit code — the `command` is the problem.
+    solution: |
+      kubectl patch deployment worker -n hardex-crash --type=json \
+        -p='[{"op":"replace","path":"/spec/template/spec/containers/0/command","value":["sh","-c","sleep 3600"]}]'
+    setup:
+      - apply: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: worker
+            namespace: hardex-crash
+          spec:
+            replicas: 2
+            selector:
+              matchLabels: {app: worker}
+            template:
+              metadata:
+                labels: {app: worker}
+              spec:
+                containers:
+                - name: worker
+                  image: busybox:1.36
+                  command: ["sh", "-c", "exec /usr/local/bin/start-worker.sh"]
+    checks:
+      - description: "Deployment `worker` has 2 ready replicas"
+        get: { kind: deployment, name: worker, namespace: hardex-crash }
+        assert:
+          - { field: "status.readyReplicas", equals: 2 }
+      - description: "Image was not changed from `busybox:1.36`"
+        get: { kind: deployment, name: worker, namespace: hardex-crash }
+        assert:
+          - { field: "spec.template.spec.containers[0].image", matches: "busybox" }
+      - description: "No `worker` Pods are currently crash-looping"
+        list: { kind: pods, namespace: hardex-crash, labelSelector: "app=worker" }
+        filter:
+          - { field: "status.phase", equals: "Running" }
+        count: { gte: 2 }

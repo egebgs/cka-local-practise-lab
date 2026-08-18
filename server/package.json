@@ -1,0 +1,17 @@
+{
+  "name": "cka-practice-server",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dockerode": "^4.0.2",
+    "express": "^4.19.2",
+    "js-yaml": "^5.2.3",
+    "ws": "^8.17.0"
+  }
+}
