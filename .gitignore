@@ -1,0 +1,5 @@
+node_modules/
+cluster/kubeconfigs/
+*.log
+.DS_Store
+.claude

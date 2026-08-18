@@ -1,5 +1,6 @@
 const kubectl = require("./kubectl");
 const { execInContainer } = require("./nodeExec");
+const { BASTION_CONTAINER } = require("./docker");
 
 /** The fixed cluster topology (see exams/SCHEMA.md section 1). Kept here rather than
  * imported from cluster/lib.js since that module drives host-side provisioning scripts
@@ -136,6 +137,41 @@ async function resetNodeLevelState(nodes, controlPlaneNode, log) {
   }
 }
 
+/** The bastion is a single, persistent, shared container -- it's never recreated between
+ * sessions, so anything a student leaves on its filesystem or in its kubeconfig
+ * (`kubectl config set-context --current --namespace=...`, scratch YAML files) sticks
+ * around for the next exam too, independent of anything happening on the clusters. */
+async function resetBastionWorkspace(log) {
+  try {
+    // clear out scratch files in the home directory, but keep dotfiles (.bashrc,
+    // .kube/, .tmux.conf, ...) intact.
+    const res = await execInContainer(BASTION_CONTAINER, [
+      "sh",
+      "-c",
+      "find /root -mindepth 1 -maxdepth 1 ! -name '.*' -exec rm -rf {} +",
+    ]);
+    if (res.exitCode === 0) log("bastion: cleared scratch files from home directory");
+    else log(`bastion: home directory cleanup exited ${res.exitCode}: ${res.output}`);
+  } catch (err) {
+    log(`bastion: home directory cleanup failed: ${err.message}`);
+  }
+
+  try {
+    // undo any `kubectl config set-context --current --namespace=...` (very commonly
+    // used to avoid typing -n on every command) and land back on the default context.
+    await execInContainer(BASTION_CONTAINER, [
+      "sh",
+      "-c",
+      "kubectl config unset contexts.k8s-c1.namespace; " +
+        "kubectl config unset contexts.k8s-c2.namespace; " +
+        "kubectl config use-context k8s-c1",
+    ]);
+    log("bastion: reset kubeconfig context namespaces");
+  } catch (err) {
+    log(`bastion: kubeconfig reset failed: ${err.message}`);
+  }
+}
+
 async function resetEnvironment() {
   const logs = [];
   const log = (msg) => logs.push(msg);
@@ -150,6 +186,8 @@ async function resetEnvironment() {
       log(`${cluster.context}: reset failed: ${err.message}`);
     }
   }
+
+  await resetBastionWorkspace(log);
 
   return logs;
 }
