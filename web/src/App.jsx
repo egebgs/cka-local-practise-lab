@@ -100,8 +100,22 @@ export default function App() {
   };
 
   const handleStart = async (examId, mode, opts) => {
+    // If a previous session was left behind (tab closed without clicking Finish) and
+    // the student is starting something else instead of resuming it, that old session's
+    // leftover cluster state would otherwise never get cleaned up -- do it now, before
+    // the new session's own setup can race against it.
+    if (resumable) {
+      clearActiveSession();
+      setResumable(null);
+      setResettingEnv(true);
+      try {
+        await api.resetEnvironment();
+      } catch {
+      } finally {
+        setResettingEnv(false);
+      }
+    }
     const [s, exam] = await Promise.all([api.createSession(examId, mode, opts), api.getExam(examId)]);
-    setResumable(null);
     enterSession(s, exam, s.questionIds[0]);
   };
 

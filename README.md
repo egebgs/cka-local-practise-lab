@@ -58,6 +58,23 @@ Some questions require treating a node like a real exam node — "SSH in" by run
 `docker exec -it <node-name> bash` from inside the practice terminal (the bastion
 container has Docker CLI + socket access for exactly this).
 
+### Environment reset
+
+Both clusters are shared, persistent infrastructure — there's no per-session isolation
+(see the architecture notes below). To keep that from leaking state between exams,
+finishing a session (clicking **Finish** in Casual mode, or **Back to Home** after an
+exam's results) automatically resets the environment: every non-system namespace and
+PersistentVolume is deleted, every node is uncordoned and stripped of any non-built-in
+taints, kubelet is restarted wherever it's stopped, and each control-plane node's static
+pod manifests are restored to just the standard kubeadm set (removing any custom static
+pods, restoring `kube-scheduler.yaml` if a question had disabled it). You'll see a brief
+"Resetting the practice environment…" screen while this runs (`server/src/environmentReset.js`).
+
+This covers everything the bundled exam does. A custom exam with `shell` steps that
+break something *not* covered above (kubelet + the standard static manifests) won't be
+auto-restored by this — only add such steps if you're comfortable cleaning them up
+manually, or extend `environmentReset.js` to know about the new pattern.
+
 ### Known limitation
 
 This environment's default CNI (`kindnet`) does not enforce `NetworkPolicy` objects.
