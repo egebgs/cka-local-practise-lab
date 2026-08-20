@@ -212,26 +212,54 @@ code.copy-code.copied { color: var(--green); border-color: var(--green); }
 .main-grid {
   flex: 1 1 auto;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 260px 1fr 1fr;
-  /* without an explicit row track, the grid row sizes to its tallest child's content
-     instead of filling the viewport -- the terminal (and everything else) would then
-     keep growing the page instead of scrolling internally. */
-  grid-template-rows: minmax(0, 1fr);
+  display: flex;
+  overflow: hidden;
 }
 .main-grid > * {
-  /* grid items default to min-height: auto, which prevents a child's own
+  /* flex items default to min-height/min-width: auto, which prevents a child's own
      overflow-y: auto from engaging until content already overflows the *page* --
      this is what lets each column scroll internally instead of growing the row. */
   min-height: 0;
+  min-width: 0;
 }
 
 /* ---------- Question list ---------- */
 .question-list {
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
   border-right: 1px solid var(--border);
   overflow-y: auto;
   background: var(--panel-alt);
 }
+.question-list.collapsed {
+  flex: 0 0 36px;
+  overflow: visible;
+  align-items: center;
+  padding-top: 10px;
+}
+.question-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.fold-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.fold-btn:hover { color: var(--text); background: #1c2531; }
 .q-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--border); }
 .q-row.active { background: rgba(88,166,255,0.1); }
 .q-row-main {
@@ -257,7 +285,24 @@ code.copy-code.copied { color: var(--green); border-color: var(--green); }
 .status-dot.status-fail { background: var(--red); }
 
 /* ---------- Question panel ---------- */
-.question-panel { overflow-y: auto; padding: 20px; border-right: 1px solid var(--border); }
+.question-panel {
+  /* set as an exact px value by App.jsx (see applySplitWidth) -- 50% here is only a
+     fallback for the very first paint before that effect runs */
+  flex: 0 0 var(--qp-width, 50%);
+  overflow-y: auto;
+  padding: 20px;
+}
+
+/* ---------- Resizer ---------- */
+.pane-resizer {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: var(--border);
+}
+.pane-resizer:hover,
+.pane-resizer.dragging {
+  background: var(--accent);
+}
 .question-header { display: flex; gap: 10px; margin-bottom: 14px; }
 .domain-tag, .context-tag {
   font-size: 11px;
@@ -308,7 +353,7 @@ code.copy-code.copied { color: var(--green); border-color: var(--green); }
 }
 
 /* ---------- Terminal ---------- */
-.terminal-container { height: 100%; overflow: hidden; padding: 8px; background: #0d1117; }
+.terminal-container { flex: 1 1 auto; height: 100%; overflow: hidden; padding: 8px; background: #0d1117; }
 
 /* ---------- Review screen ---------- */
 .review-screen { max-width: 800px; margin: 0 auto; padding: 48px 24px; }

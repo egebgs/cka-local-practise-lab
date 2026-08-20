@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api.js";
-import { saveActiveSession, saveLastQuestion, loadActiveSession, clearActiveSession } from "./persist.js";
+import {
+  saveActiveSession,
+  saveLastQuestion,
+  loadActiveSession,
+  clearActiveSession,
+  loadLayoutPrefs,
+  saveLayoutPrefs,
+} from "./persist.js";
 import Home from "./components/Home.jsx";
 import QuestionList from "./components/QuestionList.jsx";
 import QuestionPanel from "./components/QuestionPanel.jsx";
@@ -8,6 +15,12 @@ import TerminalPanel from "./components/Terminal.jsx";
 import Timer from "./components/Timer.jsx";
 import ReviewScreen from "./components/ReviewScreen.jsx";
 import ResultsReport from "./components/ResultsReport.jsx";
+import Resizer from "./components/Resizer.jsx";
+
+// Must match styles.css (.question-list / .question-list.collapsed / .pane-resizer)
+const SIDEBAR_WIDTH = 260;
+const SIDEBAR_COLLAPSED_WIDTH = 36;
+const RESIZER_WIDTH = 6;
 
 export default function App() {
   const [health, setHealth] = useState(null);
@@ -24,6 +37,10 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [resumable, setResumable] = useState(null); // { session, exam } for a previously-left session, if any
   const [resettingEnv, setResettingEnv] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => !!loadLayoutPrefs().sidebarCollapsed);
+  const [splitPct, setSplitPct] = useState(() => loadLayoutPrefs().splitPct || 50);
+  const mainGridRef = useRef(null);
+  const dragPctRef = useRef(splitPct);
 
   const loadExams = useCallback(() => {
     api
@@ -139,6 +156,62 @@ export default function App() {
     }
   };
 
+  const toggleSidebar = () => {
+    setSidebarCollapsed((v) => {
+      const next = !v;
+      saveLayoutPrefs({ sidebarCollapsed: next });
+      return next;
+    });
+  };
+
+  // `--qp-width` is always an exact pixel width, not a CSS percentage -- a flex item's
+  // percentage flex-basis resolves against the *whole* flex container (main-grid),
+  // not "the space left after the sidebar", so computing that in JS (against the
+  // actual content area) and applying it as a concrete px value is what makes the
+  // drag math and the rendered result agree.
+  const applySplitWidth = useCallback((pct, collapsed) => {
+    const grid = mainGridRef.current;
+    if (!grid) return;
+    const rect = grid.getBoundingClientRect();
+    const sidebarWidth = collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH;
+    const contentWidth = rect.width - sidebarWidth - RESIZER_WIDTH;
+    if (contentWidth <= 0) return;
+    grid.style.setProperty("--qp-width", `${(contentWidth * pct) / 100}px`);
+  }, []);
+
+  // Keep the pixel width correct whenever the split ratio, the sidebar's collapsed
+  // state, or the window itself changes size (a ratio-based split should stay
+  // proportional across all of those, not just at the moment it was dragged).
+  useLayoutEffect(() => {
+    applySplitWidth(splitPct, sidebarCollapsed);
+    const onResize = () => applySplitWidth(splitPct, sidebarCollapsed);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [splitPct, sidebarCollapsed, applySplitWidth, view]);
+
+  // During drag, mutate the width directly via the ref (smooth, no re-render on every
+  // pixel of movement); only commit to React state (and persist it) on release.
+  const handleSplitDragMove = useCallback(
+    (clientX) => {
+      const grid = mainGridRef.current;
+      if (!grid) return;
+      const rect = grid.getBoundingClientRect();
+      const sidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH;
+      const contentLeft = rect.left + sidebarWidth;
+      const contentWidth = rect.right - contentLeft - RESIZER_WIDTH;
+      if (contentWidth <= 0) return;
+      const pct = Math.min(80, Math.max(20, ((clientX - contentLeft) / contentWidth) * 100));
+      dragPctRef.current = pct;
+      grid.style.setProperty("--qp-width", `${(contentWidth * pct) / 100}px`);
+    },
+    [sidebarCollapsed]
+  );
+
+  const handleSplitDragEnd = useCallback(() => {
+    setSplitPct(dragPctRef.current);
+    saveLayoutPrefs({ splitPct: dragPctRef.current });
+  }, []);
+
   const selectQuestion = (qid) => {
     setCurrentQuestionId(qid);
     if (session) saveLastQuestion(session.id, qid);
@@ -253,7 +326,7 @@ export default function App() {
           )}
         </div>
       </div>
-      <div className="main-grid">
+      <div className="main-grid" ref={mainGridRef}>
         <QuestionList
           questions={sessionQuestions}
           currentId={currentQuestionId}
@@ -262,6 +335,8 @@ export default function App() {
           mode={session.mode}
           onSelect={selectQuestion}
           onToggleFlag={handleToggleFlag}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={toggleSidebar}
         />
         <QuestionPanel
           key={currentQuestionId}
@@ -273,6 +348,7 @@ export default function App() {
           onNotesSaved={handleNotesSaved}
           onResult={handleResult}
         />
+        <Resizer onDragMove={handleSplitDragMove} onDragEnd={handleSplitDragEnd} />
         <TerminalPanel sessionId={session.id} />
       </div>
     </div>
