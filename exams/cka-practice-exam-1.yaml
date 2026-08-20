@@ -1,0 +1,321 @@
+apiVersion: cka-practice/v1
+kind: Exam
+metadata:
+  id: cka-practice-exam-1
+  title: "CKA Practice Exam 1"
+  description: "Mixed-domain practice exam covering all five CKA curriculum domains at their official weights."
+  defaultDurationMinutes: 90
+
+questions:
+  - id: q1
+    domain: "Storage"
+    weight: 10
+    title: "Bind a PVC to a hostPath PV"
+    contexts: [k8s-c1]
+    namespace: ex1-q1
+    prompt: |
+      Task weight: 10%
+
+      Context: `k8s-c1`
+
+      Create a PersistentVolume named `data-pv` with capacity `1Gi`, access mode
+      `ReadWriteOnce`, `storageClassName` `manual`, using `hostPath` `/mnt/data`.
+
+      Then create a PersistentVolumeClaim named `data-pvc` in namespace `ex1-q1`
+      requesting `500Mi`, access mode `ReadWriteOnce`, `storageClassName` `manual`,
+      such that it binds to `data-pv`.
+    hint: |
+      `kubectl apply -f` a PV manifest first, then a PVC manifest with a matching
+      `storageClassName` and a compatible access mode/size.
+    solution: |
+      kubectl apply -f - <<EOF
+      apiVersion: v1
+      kind: PersistentVolume
+      metadata:
+        name: data-pv
+      spec:
+        capacity: {storage: 1Gi}
+        accessModes: [ReadWriteOnce]
+        storageClassName: manual
+        hostPath: {path: /mnt/data}
+      ---
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: data-pvc
+        namespace: ex1-q1
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: manual
+        resources: {requests: {storage: 500Mi}}
+      EOF
+    setup: []
+    checks:
+      - description: "PersistentVolume `data-pv` exists with the correct capacity, access mode, and class"
+        get: { kind: pv, name: data-pv }
+        assert:
+          - { field: "spec.capacity.storage", equals: "1Gi" }
+          - { field: "spec.accessModes", contains: "ReadWriteOnce" }
+          - { field: "spec.storageClassName", equals: "manual" }
+      - description: "PersistentVolumeClaim `data-pvc` is Bound using storageClassName `manual`"
+        get: { kind: pvc, name: data-pvc, namespace: ex1-q1 }
+        assert:
+          - { field: "status.phase", equals: "Bound" }
+          - { field: "spec.storageClassName", equals: "manual" }
+
+  - id: q2
+    domain: "Workloads & Scheduling"
+    weight: 15
+    title: "Deployment with resource limits and a node selector"
+    contexts: [k8s-c1]
+    namespace: ex1-q2
+    prompt: |
+      Task weight: 15%
+
+      Context: `k8s-c1`
+
+      In namespace `ex1-q2`, create a Deployment named `web-app` with 3 replicas
+      of image `nginx:1.25`, labelled `app=web-app`, container port `80`.
+
+      Set resource `requests` of `cpu=100m`/`memory=128Mi` and `limits` of
+      `cpu=200m`/`memory=256Mi` on the container.
+
+      Constrain the Pods to run only on the node `cka-main-worker` using a
+      `nodeSelector` on `kubernetes.io/hostname`.
+    hint: |
+      `kubectl create deployment` then `kubectl edit`/`kubectl patch` to add
+      `resources` and `spec.template.spec.nodeSelector`.
+    solution: |
+      kubectl create deployment web-app -n ex1-q2 --image=nginx:1.25 --replicas=3
+      kubectl patch deployment web-app -n ex1-q2 --type merge -p \
+        '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"cka-main-worker"},"containers":[{"name":"nginx","resources":{"requests":{"cpu":"100m","memory":"128Mi"},"limits":{"cpu":"200m","memory":"256Mi"}}}]}}}}'
+    setup: []
+    checks:
+      - description: "Deployment `web-app` has 3 replicas of `nginx:1.25`"
+        get: { kind: deployment, name: web-app, namespace: ex1-q2 }
+        assert:
+          - { field: "spec.replicas", equals: 3 }
+          - { field: "spec.template.spec.containers[0].image", matches: "nginx" }
+      - description: "Container has the correct requests and limits"
+        get: { kind: deployment, name: web-app, namespace: ex1-q2 }
+        assert:
+          - { field: "spec.template.spec.containers[0].resources.requests.cpu", equals: "100m" }
+          - { field: "spec.template.spec.containers[0].resources.requests.memory", equals: "128Mi" }
+          - { field: "spec.template.spec.containers[0].resources.limits.cpu", equals: "200m" }
+          - { field: "spec.template.spec.containers[0].resources.limits.memory", equals: "256Mi" }
+      - description: "Pods are constrained to node `cka-main-worker`"
+        get: { kind: deployment, name: web-app, namespace: ex1-q2 }
+        assert:
+          - { field: "spec.template.spec.nodeSelector['kubernetes.io/hostname']", equals: "cka-main-worker" }
+
+  - id: q3
+    domain: "Services & Networking"
+    weight: 20
+    title: "Expose a Deployment and lock it down with a NetworkPolicy"
+    contexts: [k8s-c1]
+    namespace: ex1-q3
+    prompt: |
+      Task weight: 20%
+
+      Context: `k8s-c1`
+
+      Namespace `ex1-q3` has a Deployment `orders` (`app=orders`, container port
+      `9090`, already running).
+
+      Create a Service named `orders-svc` of type `ClusterIP` that selects
+      `app=orders` and serves on port `9090`.
+
+      Then create a NetworkPolicy named `orders-netpol` that denies all ingress
+      to `orders` Pods except from Pods labelled `role=frontend`, on port `9090`.
+    hint: |
+      `kubectl expose deployment orders --port=9090`, then write a NetworkPolicy
+      with `podSelector: {app: orders}` and one `ingress` rule.
+    solution: |
+      kubectl expose deployment orders -n ex1-q3 --name=orders-svc --port=9090
+      kubectl apply -f - <<EOF
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: orders-netpol
+        namespace: ex1-q3
+      spec:
+        podSelector: {matchLabels: {app: orders}}
+        policyTypes: [Ingress]
+        ingress:
+        - from: [{podSelector: {matchLabels: {role: frontend}}}]
+          ports: [{protocol: TCP, port: 9090}]
+      EOF
+    setup:
+      - apply: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: orders
+            namespace: ex1-q3
+          spec:
+            replicas: 1
+            selector: {matchLabels: {app: orders}}
+            template:
+              metadata: {labels: {app: orders}}
+              spec:
+                containers:
+                - name: orders
+                  image: nginx:1.25
+                  ports: [{containerPort: 9090}]
+      - kubectl: ["rollout", "status", "deployment/orders", "-n", "ex1-q3", "--timeout=60s"]
+    checks:
+      - description: "Service `orders-svc` is a ClusterIP selecting `app=orders` on port 9090"
+        get: { kind: service, name: orders-svc, namespace: ex1-q3 }
+        assert:
+          - { field: "spec.type", equals: "ClusterIP" }
+          - { field: "spec.selector.app", equals: "orders" }
+          - { field: "spec.ports[0].port", equals: 9090 }
+      - description: "NetworkPolicy `orders-netpol` targets `app=orders`"
+        get: { kind: networkpolicy, name: orders-netpol, namespace: ex1-q3 }
+        assert:
+          - { field: "spec.podSelector.matchLabels.app", equals: "orders" }
+      - description: "NetworkPolicy allows ingress only from `role=frontend` on port 9090"
+        get: { kind: networkpolicy, name: orders-netpol, namespace: ex1-q3 }
+        assert:
+          - { field: "spec.ingress[0].from[0].podSelector.matchLabels.role", equals: "frontend" }
+          - { field: "spec.ingress[0].ports[0].port", equals: 9090 }
+
+  - id: q4
+    domain: "Cluster Architecture, Installation & Configuration"
+    weight: 25
+    title: "RBAC: scope a ServiceAccount to read-only Pod access"
+    contexts: [k8s-c1]
+    namespace: ex1-q4
+    prompt: |
+      Task weight: 25%
+
+      Context: `k8s-c1`
+
+      In namespace `ex1-q4`, create a ServiceAccount named `ci-bot`.
+
+      Create a Role named `pod-reader` allowing `get`, `list`, and `watch` on
+      `pods` in that namespace.
+
+      Create a RoleBinding named `ci-bot-binding` granting `pod-reader` to the
+      `ci-bot` ServiceAccount.
+    hint: |
+      `kubectl create serviceaccount`, `kubectl create role --verb=get,list,watch
+      --resource=pods`, `kubectl create rolebinding ... --serviceaccount`.
+    solution: |
+      kubectl create serviceaccount ci-bot -n ex1-q4
+      kubectl create role pod-reader -n ex1-q4 --verb=get,list,watch --resource=pods
+      kubectl create rolebinding ci-bot-binding -n ex1-q4 --role=pod-reader --serviceaccount=ex1-q4:ci-bot
+    setup: []
+    checks:
+      - description: "ServiceAccount `ci-bot` exists in `ex1-q4`"
+        get: { kind: serviceaccount, name: ci-bot, namespace: ex1-q4 }
+      - description: "Role `pod-reader` allows get/list/watch on pods"
+        get: { kind: role, name: pod-reader, namespace: ex1-q4 }
+        assert:
+          - { field: "rules[0].resources", contains: "pods" }
+          - { field: "rules[0].verbs", contains: "get" }
+          - { field: "rules[0].verbs", contains: "list" }
+          - { field: "rules[0].verbs", contains: "watch" }
+      - description: "RoleBinding `ci-bot-binding` binds `pod-reader` to `ci-bot`"
+        get: { kind: rolebinding, name: ci-bot-binding, namespace: ex1-q4 }
+        assert:
+          - { field: "roleRef.name", equals: "pod-reader" }
+          - { field: "subjects", containsMatch: { name: "ci-bot", namespace: "ex1-q4" } }
+      - description: "`ci-bot` can get pods in `ex1-q4`"
+        kubectl:
+          args: ["auth", "can-i", "get", "pods", "-n", "ex1-q4", "--as", "system:serviceaccount:ex1-q4:ci-bot"]
+        assert:
+          stdout: { equals: "yes" }
+      - description: "`ci-bot` cannot delete pods in `ex1-q4`"
+        kubectl:
+          args: ["auth", "can-i", "delete", "pods", "-n", "ex1-q4", "--as", "system:serviceaccount:ex1-q4:ci-bot"]
+        assert:
+          stdout: { equals: "no" }
+
+  - id: q5
+    domain: "Troubleshooting"
+    weight: 15
+    title: "Fix a Deployment stuck on a bad image tag"
+    contexts: [k8s-c1]
+    namespace: ex1-q5
+    prompt: |
+      Task weight: 15%
+
+      Context: `k8s-c1`
+
+      Namespace `ex1-q5` has a Deployment `cache` that is failing to start
+      because it references image `redis:1.25`, which does not exist.
+
+      Fix the Deployment `cache` (don't delete/recreate it) so its Pods reach
+      `Running` state. Use a valid `redis` image tag.
+    hint: |
+      `kubectl describe pod` in `ex1-q5` to confirm `ImagePullBackOff`, then
+      `kubectl set image deployment/cache redis=redis:7.2 -n ex1-q5`.
+    solution: |
+      kubectl set image deployment/cache redis=redis:7.2 -n ex1-q5
+    setup:
+      - apply: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: cache
+            namespace: ex1-q5
+          spec:
+            replicas: 1
+            selector: {matchLabels: {app: cache}}
+            template:
+              metadata: {labels: {app: cache}}
+              spec:
+                containers:
+                - name: redis
+                  image: redis:1.25
+    checks:
+      - description: "Deployment `cache` no longer references the broken tag `redis:1.25`"
+        get: { kind: deployment, name: cache, namespace: ex1-q5 }
+        assert:
+          - { field: "spec.template.spec.containers[0].image", notEquals: "redis:1.25" }
+          - { field: "spec.template.spec.containers[0].image", matches: "redis" }
+      - description: "At least one `cache` Pod is Running"
+        list: { kind: pods, namespace: ex1-q5, labelSelector: "app=cache" }
+        filter:
+          - { field: "status.phase", equals: "Running" }
+        count: { gte: 1 }
+
+  - id: q6
+    domain: "Troubleshooting"
+    weight: 15
+    title: "Restore a missing control-plane static Pod"
+    contexts: [k8s-c1]
+    prompt: |
+      Task weight: 15%
+
+      Context: `k8s-c1`
+
+      The `kube-scheduler` static Pod on `cka-main-control-plane` has disappeared
+      because its manifest was moved out of the static-pod directory.
+
+      SSH-equivalent: `docker exec -it cka-main-control-plane bash`.
+
+      Find the misplaced manifest and restore it so `kube-scheduler` runs again,
+      without editing the manifest's contents.
+    hint: |
+      Check `/etc/kubernetes/` for a manifest that isn't in `/etc/kubernetes/manifests/`
+      anymore and move it back.
+    solution: |
+      docker exec -it cka-main-control-plane bash
+      mv /etc/kubernetes/kube-scheduler.yaml.disabled /etc/kubernetes/manifests/kube-scheduler.yaml
+    setup:
+      - shell:
+          target: "node:cka-main-control-plane"
+          run: "mv /etc/kubernetes/manifests/kube-scheduler.yaml /etc/kubernetes/kube-scheduler.yaml.disabled"
+    checks:
+      - description: "Scheduler manifest is back in the static-pod directory"
+        shell:
+          target: "node:cka-main-control-plane"
+          run: "test -f /etc/kubernetes/manifests/kube-scheduler.yaml && echo present || echo absent"
+        assert:
+          stdout: { equals: "present" }
+      - description: "`kube-scheduler` Pod on `cka-main-control-plane` is Running"
+        get: { kind: pod, name: kube-scheduler-cka-main-control-plane, namespace: kube-system }
+        assert:
+          - { field: "status.phase", equals: "Running" }

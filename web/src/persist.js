@@ -30,3 +30,20 @@ export function clearActiveSession() {
     localStorage.removeItem(KEY);
   } catch {}
 }
+
+const LAYOUT_KEY = "cka-practice.layout";
+
+export function loadLayoutPrefs() {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveLayoutPrefs(prefs) {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ ...loadLayoutPrefs(), ...prefs }));
+  } catch {}
+}

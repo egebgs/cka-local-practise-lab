@@ -1,6 +1,32 @@
-export default function QuestionList({ questions, currentId, flags, results, mode, onSelect, onToggleFlag }) {
+export default function QuestionList({
+  questions,
+  currentId,
+  flags,
+  results,
+  mode,
+  onSelect,
+  onToggleFlag,
+  collapsed,
+  onToggleCollapsed,
+}) {
+  if (collapsed) {
+    return (
+      <div className="question-list collapsed">
+        <button className="fold-btn" onClick={onToggleCollapsed} title="Expand question list">
+          »
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="question-list">
+      <div className="question-list-header">
+        <span>Questions</span>
+        <button className="fold-btn" onClick={onToggleCollapsed} title="Collapse question list">
+          «
+        </button>
+      </div>
       {questions.map((q, i) => {
         const flagged = !!flags[q.id];
         const result = results && results[q.id];
